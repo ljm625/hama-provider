@@ -69,6 +69,19 @@ If those are not set, the service also honors standard `HTTP_PROXY`,
 `HTTPS_PROXY`, `http_proxy`, and `https_proxy` environment variables. PAC files
 are not evaluated by this service.
 
+## Title Aliases
+
+New shows can be missing from anime-list external-id mappings, and Chinese
+localized titles are not always present in AniDB's title database. Add exact
+fallback aliases when Plex sends a title that cannot be matched:
+
+```sh
+export HAMA_TITLE_ALIASES='我理想中的异世界生活=12345;另一个标题=67890'
+python3 -m hama_provider
+```
+
+The value on the right side is the AniDB anime id.
+
 ## Public URL
 
 If the provider is behind a reverse proxy, set both the local path prefix and
@@ -194,3 +207,4 @@ as `metadataAgentProviderGroupId`.
 | `HAMA_MIN_GENRE_WEIGHT` | `400` | Minimum AniDB tag weight |
 | `HAMA_INCLUDE_WEIGHTED_GENRES` | `false` | Include weighted non-infobox AniDB tags |
 | `HAMA_PROXY_ASSETS` | `true` | Serve artwork through `/asset/...` |
+| `HAMA_TITLE_ALIASES` | empty | Semicolon-separated `title=anidbid` fallback aliases |

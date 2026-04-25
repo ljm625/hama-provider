@@ -9,7 +9,7 @@ import urllib.parse
 
 from . import __version__
 from .anime_lists import AnimeListMapping, AnimeListsRepository
-from .anidb import AniDBRepository, AnimeMetadata, EpisodeMetadata
+from .anidb import AniDBRepository, AnimeMetadata, EpisodeMetadata, normalize_title
 from .config import Config
 from .http_client import HttpClient
 from .models import TYPE_NAMES, guid_items, image_container, media_container, tag_items
@@ -73,22 +73,46 @@ class HamaProviderService:
         title = self._payload_title(payload)
         forced = self._forced_id(payload, title)
         candidates: list[dict[str, Any]] = []
+        alias_aid = self._alias_aid(title)
 
-        if forced:
-            mapping = self._mapping_for_forced_id(*forced)
+        if alias_aid:
+            candidates.append(self._match_metadata(alias_aid, item_type, 100, title=title, mapping=None, payload=payload))
+        elif forced:
+            try:
+                mapping = self._mapping_for_forced_id(*forced)
+            except Exception as exc:
+                LOG.warning("Forced external id %s-%s lookup failed: %s", forced[0], forced[1], exc)
+                mapping = None
             aid = mapping.anidb_id if mapping else forced[1] if forced[0].startswith("anidb") else ""
             if aid:
-                candidates.append(self._match_metadata(aid, item_type, 100, mapping=mapping))
-        else:
-            for candidate in self.anidb.search(title, limit=self.config.max_match_results):
-                mapping = self.anime_lists.find_by_anidb(candidate.aid)
-                candidates.append(self._match_metadata(candidate.aid, item_type, candidate.score, title=candidate.title, mapping=mapping))
+                candidates.append(self._match_metadata(aid, item_type, 100, title=title, mapping=mapping, payload=payload))
+            else:
+                LOG.info("Forced external id %s-%s has no anime-list mapping; falling back to title search", forced[0], forced[1])
+
+        if not candidates:
+            candidates = self._title_candidates(title, item_type, payload)
 
         manual = str(payload.get("manual", "")).lower() in {"1", "true", "yes"}
         if not manual and candidates:
             candidates = candidates[:1]
         LOG.info("Match result: title=%r type=%s forced=%s candidates=%d", title, item_type, forced, len(candidates))
         return media_container(self.config.provider_identifier, candidates)
+
+    def _title_candidates(self, title: str, item_type: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        for candidate in self.anidb.search(title, limit=self.config.max_match_results):
+            mapping = self.anime_lists.find_by_anidb(candidate.aid)
+            candidates.append(
+                self._match_metadata(
+                    candidate.aid,
+                    item_type,
+                    candidate.score,
+                    title=candidate.title,
+                    mapping=mapping,
+                    payload=payload,
+                )
+            )
+        return candidates
 
     def metadata(self, rating_key: str) -> dict[str, Any]:
         parsed = self._parse_rating_key(rating_key)
@@ -168,11 +192,13 @@ class HamaProviderService:
         *,
         title: str = "",
         mapping: AnimeListMapping | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         title = title or (mapping.name if mapping else "") or self.anidb.title_for_aid(aid)
-        key_type = "movie" if item_type == "movie" else "show"
-        key = self._rating_key(aid, key_type)
-        return {
+        key_type = item_type if item_type in {"movie", "show", "season", "episode"} else "show"
+        season, episode = self._payload_indices(payload or {})
+        key = self._rating_key(aid, key_type, season=season, episode=episode)
+        metadata: dict[str, Any] = {
             "ratingKey": key,
             "key": self.config.provider_path(f"/library/metadata/{key}"),
             "guid": self._guid(key_type, key),
@@ -180,6 +206,36 @@ class HamaProviderService:
             "title": title,
             "score": max(0, min(100, int(score))),
         }
+        if key_type == "season":
+            show_key = self._rating_key(aid, "show")
+            metadata.update(
+                {
+                    "index": season,
+                    "parentRatingKey": show_key,
+                    "parentKey": self.config.provider_path(f"/library/metadata/{show_key}"),
+                    "parentGuid": self._guid("show", show_key),
+                    "parentTitle": title,
+                    "title": "Specials" if season == 0 else f"Season {season}",
+                }
+            )
+        elif key_type == "episode":
+            show_key = self._rating_key(aid, "show")
+            season_key = self._rating_key(aid, "season", season=season)
+            metadata.update(
+                {
+                    "index": episode,
+                    "parentIndex": season,
+                    "parentRatingKey": season_key,
+                    "parentKey": self.config.provider_path(f"/library/metadata/{season_key}"),
+                    "parentGuid": self._guid("season", season_key),
+                    "parentTitle": "Specials" if season == 0 else f"Season {season}",
+                    "grandparentRatingKey": show_key,
+                    "grandparentKey": self.config.provider_path(f"/library/metadata/{show_key}"),
+                    "grandparentGuid": self._guid("show", show_key),
+                    "grandparentTitle": title,
+                }
+            )
+        return metadata
 
     def _anime_metadata(self, anime: AnimeMetadata, item_type: str, *, mapping: AnimeListMapping | None) -> dict[str, Any]:
         key = self._rating_key(anime.aid, item_type)
@@ -330,6 +386,21 @@ class HamaProviderService:
                 return value.strip()
         return ""
 
+    def _alias_aid(self, title: str) -> str:
+        if not title:
+            return ""
+        if title in self.config.title_aliases:
+            return self.config.title_aliases[title]
+        normalized = normalize_title(title)
+        for alias, aid in self.config.title_aliases.items():
+            if normalize_title(alias) == normalized:
+                return aid
+        return ""
+
+    @staticmethod
+    def _payload_indices(payload: dict[str, Any]) -> tuple[int, int]:
+        return _payload_int(payload, "parentIndex", 1), _payload_int(payload, "index", 1)
+
     def _forced_id(self, payload: dict[str, Any], title: str) -> tuple[str, str] | None:
         guid = str(payload.get("guid") or "")
         custom = CUSTOM_GUID_RE.search(guid)
@@ -415,3 +486,13 @@ class HamaProviderService:
     def _decode_asset_url(token: str) -> str:
         padding = "=" * (-len(token) % 4)
         return base64.urlsafe_b64decode((token + padding).encode("ascii")).decode("utf-8")
+
+
+def _payload_int(payload: dict[str, Any], key: str, default: int) -> int:
+    value = payload.get(key)
+    if isinstance(value, list):
+        value = value[0] if value else default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

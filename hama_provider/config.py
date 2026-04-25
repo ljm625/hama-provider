@@ -47,6 +47,19 @@ def _languages(value: str) -> tuple[str, ...]:
     return items or ("main", "en", "ja")
 
 
+def _title_aliases(value: str) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for item in value.replace("\n", ";").split(";"):
+        if not item.strip() or "=" not in item:
+            continue
+        title, aid = item.split("=", 1)
+        title = title.strip()
+        aid = aid.strip()
+        if title and aid:
+            aliases[title] = aid
+    return aliases
+
+
 def _provider_kind(value: str) -> str:
     value = (value or "tv").strip().lower()
     return value if value in {"tv", "movie", "both"} else "tv"
@@ -88,6 +101,7 @@ class Config:
     proxy_assets: bool
     request_timeout: int
     max_match_results: int
+    title_aliases: dict[str, str]
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -113,6 +127,7 @@ class Config:
             proxy_assets=_bool("HAMA_PROXY_ASSETS", True),
             request_timeout=_int("HAMA_REQUEST_TIMEOUT", 60),
             max_match_results=_int("HAMA_MAX_MATCH_RESULTS", 10),
+            title_aliases=_title_aliases(_env("HAMA_TITLE_ALIASES")),
         )
 
     @property
