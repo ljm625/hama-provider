@@ -218,6 +218,16 @@ When editing an existing library, preserve the existing library `agent`,
 `scanner`, `name`, and `language` values and add the returned provider group id
 as `metadataAgentProviderGroupId`.
 
+## AniDB Ban Handling
+
+AniDB can return `<error>banned</error>` when the HTTP API has been queried too
+aggressively. The service invalidates cached banned responses and returns
+title-only fallback metadata instead of failing the Plex request with HTTP 500.
+
+If you see repeated ban warnings, stop the service for a while and avoid
+refreshing many items at once. Cached banned files are removed automatically
+when encountered.
+
 ## Configuration
 
 | Variable | Default | Purpose |

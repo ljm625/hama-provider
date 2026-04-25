@@ -9,7 +9,16 @@ import urllib.parse
 
 from . import __version__
 from .anime_lists import AnimeListMapping, AnimeListsRepository
-from .anidb import AniDBRepository, AnimeMetadata, EpisodeMetadata, fold_title, language_context, normalize_title
+from .anidb import (
+    AniDBRepository,
+    AnimeMetadata,
+    EpisodeMetadata,
+    clean_match_title,
+    fold_title,
+    is_low_information_title,
+    language_context,
+    normalize_title,
+)
 from .config import Config
 from .http_client import HttpClient
 from .models import TYPE_NAMES, guid_items, image_container, media_container, tag_items
@@ -108,8 +117,12 @@ class HamaProviderService:
         return media_container(self.config.provider_identifier, candidates)
 
     def _title_candidates(self, title: str, item_type: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        queries = self._match_queries(title, payload)
+        if not queries:
+            LOG.info("Match skipped: title=%r cleaned to low-information query", title)
+            return []
         candidates: list[dict[str, Any]] = []
-        for candidate in self.anidb.search(title, limit=self.config.max_match_results):
+        for candidate in self.anidb.search_variants(queries, limit=self.config.max_match_results):
             mapping = self.anime_lists.find_by_anidb(candidate.aid)
             candidates.append(
                 self._match_metadata(
@@ -389,11 +402,31 @@ class HamaProviderService:
 
     @staticmethod
     def _payload_title(payload: dict[str, Any]) -> str:
-        for key in ("title", "grandparentTitle", "parentTitle", "name"):
+        for key in ("grandparentTitle", "parentTitle", "title", "name", "filename"):
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return ""
+
+    @staticmethod
+    def _match_queries(title: str, payload: dict[str, Any]) -> list[str]:
+        values: list[str] = []
+        for key in ("grandparentTitle", "parentTitle", "title", "name", "filename"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                values.append(value.strip())
+        if title and title not in values:
+            values.insert(0, title)
+
+        queries: list[str] = []
+        for value in values:
+            cleaned = clean_match_title(value)
+            for query in (cleaned, value.strip()):
+                if not query or is_low_information_title(query):
+                    continue
+                if query not in queries:
+                    queries.append(query)
+        return queries
 
     def _alias_aid(self, title: str) -> str:
         if not title:

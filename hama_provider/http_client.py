@@ -92,6 +92,14 @@ class HttpClient:
             return gzip.decompress(body)
         return body
 
+    def invalidate(self, url: str, *, data: bytes | None = None, method: str | None = None) -> None:
+        cache_file = self.cache_dir / self._cache_key(url, data, method)
+        try:
+            cache_file.unlink()
+            LOG.info("HTTP cache invalidated: %s", url)
+        except FileNotFoundError:
+            pass
+
     @staticmethod
     def _cache_key(url: str, data: bytes | None, method: str | None) -> str:
         digest = hashlib.sha256()

@@ -28,6 +28,12 @@ RESTRICTED_GENRE = {
     "tv censoring": "TV-MA",
     "borderline porn": "TV-MA",
 }
+LOW_INFORMATION_TITLES = {
+    "the animation",
+    "animation",
+    "ova",
+    "oav",
+}
 
 _TITLE_LANGUAGES: ContextVar[tuple[str, ...] | None] = ContextVar("hama_title_languages", default=None)
 _EPISODE_LANGUAGES: ContextVar[tuple[str, ...] | None] = ContextVar("hama_episode_languages", default=None)
@@ -178,10 +184,25 @@ class AniDBRepository:
                 )
         return sorted(best.values(), key=lambda item: item.score, reverse=True)[:limit]
 
+    def search_variants(self, queries: list[str], *, limit: int) -> list[MatchCandidate]:
+        best: dict[str, MatchCandidate] = {}
+        for query in queries:
+            for candidate in self.search(query, limit=limit):
+                current = best.get(candidate.aid)
+                if current is None or candidate.score > current.score:
+                    best[candidate.aid] = candidate
+        return sorted(best.values(), key=lambda item: item.score, reverse=True)[:limit]
+
     def fetch_metadata(self, aid: str) -> AnimeMetadata:
-        root = ET.fromstring(self.client.fetch_xml_bytes(ANIDB_HTTP_API.format(aid=aid), ttl=SIX_DAYS))
+        url = ANIDB_HTTP_API.format(aid=aid)
+        root = ET.fromstring(self.client.fetch_xml_bytes(url, ttl=SIX_DAYS))
         if root.tag.lower() == "error":
-            raise RuntimeError(f"AniDB returned error for aid {aid}: {''.join(root.itertext()).strip()}")
+            message = "".join(root.itertext()).strip()
+            if "banned" in message.lower():
+                self.client.invalidate(url)
+                LOG.warning("AniDB returned banned for aid %s; returning title-only fallback metadata", aid)
+                return self._fallback_metadata(aid, message)
+            raise RuntimeError(f"AniDB returned error for aid {aid}: {message}")
         title, original_title = self._choose_title_elements(root.findall("titles/title"))
         if not title:
             title = self.title_for_aid(aid)
@@ -207,6 +228,23 @@ class AniDBRepository:
             roles=tuple(roles),
             episodes=tuple(self._episodes(root, creators)),
             resources=self._resources(root),
+        )
+
+    def _fallback_metadata(self, aid: str, reason: str = "") -> AnimeMetadata:
+        try:
+            title, original_title = self._choose_title_entries(self._titles_by_aid.get(str(aid), []))
+            if not title:
+                self.ensure_titles()
+                title, original_title = self._choose_title_entries(self._titles_by_aid.get(str(aid), []))
+        except Exception as exc:
+            LOG.warning("Could not load AniDB title fallback for aid %s: %s", aid, exc)
+            title, original_title = "", ""
+        title = title or f"AniDB {aid}"
+        return AnimeMetadata(
+            aid=str(aid),
+            title=title,
+            original_title=original_title or title,
+            summary=f"AniDB metadata is temporarily unavailable: {reason}" if reason else "",
         )
 
     @staticmethod
@@ -390,6 +428,28 @@ def normalize_title(value: str) -> str:
 def fold_title(value: str) -> str:
     value = unicodedata.normalize("NFKC", value or "").replace("`", "'")
     return re.sub(r"\s+", " ", value.casefold()).strip()
+
+
+def clean_match_title(value: str) -> str:
+    value = unicodedata.normalize("NFKC", value or "").strip()
+    value = re.sub(r"[/\\]+", " ", value.rsplit("/", 1)[-1].rsplit("\\", 1)[-1])
+    value = re.sub(r"\.(mkv|mp4|avi|m2ts|ts|mov|wmv|flv|webm)$", "", value, flags=re.I)
+    value = re.sub(r"[\[\(【][^\]\)】]*[\]\)】]", " ", value)
+    value = re.sub(r"(?i)(?:^|[\s._-])v\d+\s*$", " ", value)
+    value = re.sub(r"(?:^|[\s._-])第\s*[0-9０-９一二三四五六七八九十百]+\s*[巻卷話话集章部]\s*$", " ", value)
+    value = re.sub(r"(?i)(?:^|[\s._-])(?:vol(?:ume)?\.?|ep(?:isode)?\.?)\s*\d+\s*$", " ", value)
+    value = re.sub(r"(?i)(?:^|[\s._-])(?:s\d{1,2}e\d{1,3}|e\d{1,3})\s*$", " ", value)
+    value = re.sub(r"[._]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip(" -_")
+    return value
+
+
+def is_low_information_title(value: str) -> bool:
+    cleaned = clean_match_title(value)
+    folded = fold_title(cleaned)
+    normalized = normalize_title(cleaned)
+    non_ascii = re.sub(r"[a-z0-9\s]+", "", folded)
+    return normalized in LOW_INFORMATION_TITLES and not non_ascii.strip()
 
 
 def child_text(element: ET.Element, path: str) -> str:
