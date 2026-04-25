@@ -33,6 +33,16 @@ class HamaRequestHandler(BaseHTTPRequestHandler):
                 token = path.rsplit("/", 1)[-1]
                 body, content_type = self.service.asset(token)
                 self._send_bytes(body, content_type)
+            elif path == "/library/metadata/matches":
+                payload = self._query_payload()
+                LOG.info(
+                    "Match request: method=GET type=%r title=%r guid=%r manual=%r",
+                    payload.get("type"),
+                    payload.get("title") or payload.get("grandparentTitle") or payload.get("parentTitle"),
+                    payload.get("guid"),
+                    payload.get("manual"),
+                )
+                self._send_json(self.service.match(payload))
             elif path.startswith("/library/metadata/"):
                 self._metadata_route(path)
             else:
@@ -47,7 +57,7 @@ class HamaRequestHandler(BaseHTTPRequestHandler):
             if path == "/library/metadata/matches":
                 payload = self._read_payload()
                 LOG.info(
-                    "Match request: type=%r title=%r guid=%r manual=%r",
+                    "Match request: method=POST type=%r title=%r guid=%r manual=%r",
                     payload.get("type"),
                     payload.get("title") or payload.get("grandparentTitle") or payload.get("parentTitle"),
                     payload.get("guid"),
