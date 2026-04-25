@@ -9,7 +9,7 @@ import urllib.parse
 
 from . import __version__
 from .anime_lists import AnimeListMapping, AnimeListsRepository
-from .anidb import AniDBRepository, AnimeMetadata, EpisodeMetadata, fold_title, normalize_title
+from .anidb import AniDBRepository, AnimeMetadata, EpisodeMetadata, fold_title, language_context, normalize_title
 from .config import Config
 from .http_client import HttpClient
 from .models import TYPE_NAMES, guid_items, image_container, media_container, tag_items
@@ -35,6 +35,12 @@ class HamaProviderService:
         self.client = HttpClient(config)
         self.anime_lists = AnimeListsRepository(self.client)
         self.anidb = AniDBRepository(config, self.client)
+
+    def request_language_context(self, plex_language: str = ""):
+        return language_context(
+            self.config.title_language_priority(plex_language),
+            self.config.episode_language_priority(plex_language),
+        )
 
     def provider(self) -> dict[str, Any]:
         scheme = self.config.provider_identifier
@@ -62,6 +68,9 @@ class HamaProviderService:
             "providerIdentifier": self.config.provider_identifier,
             "providerKind": self.config.provider_kind,
             "providerTypes": self._provider_type_numbers(),
+            "titleLanguages": self.config.title_language_priority(),
+            "episodeLanguages": self.config.episode_language_priority(),
+            "usePlexLanguage": self.config.use_plex_language,
             "proxy": bool(self.client.proxies),
         }
 
@@ -107,7 +116,7 @@ class HamaProviderService:
                     candidate.aid,
                     item_type,
                     candidate.score,
-                    title=candidate.title,
+                    title=self.anidb.title_for_aid(candidate.aid) or candidate.title,
                     mapping=mapping,
                     payload=payload,
                 )

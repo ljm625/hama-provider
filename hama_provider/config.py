@@ -47,6 +47,22 @@ def _languages(value: str) -> tuple[str, ...]:
     return items or ("main", "en", "ja")
 
 
+def expand_language_code(value: str) -> tuple[str, ...]:
+    value = (value or "").strip()
+    if not value:
+        return ()
+    lower = value.lower().replace("_", "-")
+    if lower in {"main", "x-jat"}:
+        return ("main",)
+    if lower in {"zh", "zh-cn", "zh-sg", "zh-hans"}:
+        return ("zh-Hans", "zh-Hant", "zh")
+    if lower in {"zh-tw", "zh-hk", "zh-mo", "zh-hant"}:
+        return ("zh-Hant", "zh-Hans", "zh")
+    if "-" in lower:
+        return (value, lower.split("-", 1)[0])
+    return (value,)
+
+
 def _title_aliases(value: str) -> dict[str, str]:
     aliases: dict[str, str] = {}
     for item in value.replace("\n", ";").split(";"):
@@ -99,6 +115,7 @@ class Config:
     include_weighted_genres: bool
     include_adult: bool
     proxy_assets: bool
+    use_plex_language: bool
     request_timeout: int
     max_match_results: int
     title_aliases: dict[str, str]
@@ -108,6 +125,8 @@ class Config:
         http_proxy = _env("HAMA_HTTP_PROXY") or _env("HTTP_PROXY") or _env("http_proxy")
         https_proxy = _env("HAMA_HTTPS_PROXY") or _env("HTTPS_PROXY") or _env("https_proxy")
         provider_kind = _provider_kind(_env("HAMA_PROVIDER_KIND", "tv"))
+        title_languages = _env("HAMA_TITLE_LANGUAGES") or _env("HAMA_SERIES_LANGUAGES") or _env("HAMA_LANGUAGES", "main,en,ja")
+        episode_languages = _env("HAMA_EPISODE_LANGUAGES") or _env("HAMA_LANGUAGES", "main,en,ja")
         return cls(
             host=_env("HAMA_HOST", "0.0.0.0"),
             port=_int("HAMA_PORT", 34567),
@@ -119,16 +138,33 @@ class Config:
             cache_dir=Path(_env("HAMA_CACHE_DIR", ".cache")).expanduser(),
             http_proxy=_proxy_url(http_proxy),
             https_proxy=_proxy_url(https_proxy),
-            languages=_languages(_env("HAMA_LANGUAGES", "main,en,ja")),
-            episode_languages=_languages(_env("HAMA_EPISODE_LANGUAGES", "main,en,ja")),
+            languages=_languages(title_languages),
+            episode_languages=_languages(episode_languages),
             min_genre_weight=_int("HAMA_MIN_GENRE_WEIGHT", 400),
             include_weighted_genres=_bool("HAMA_INCLUDE_WEIGHTED_GENRES", False),
             include_adult=_bool("HAMA_INCLUDE_ADULT", False),
             proxy_assets=_bool("HAMA_PROXY_ASSETS", True),
+            use_plex_language=_bool("HAMA_USE_PLEX_LANGUAGE", True),
             request_timeout=_int("HAMA_REQUEST_TIMEOUT", 60),
             max_match_results=_int("HAMA_MAX_MATCH_RESULTS", 10),
             title_aliases=_title_aliases(_env("HAMA_TITLE_ALIASES")),
         )
+
+    def title_language_priority(self, plex_language: str = "") -> tuple[str, ...]:
+        return self._language_priority(self.languages, plex_language)
+
+    def episode_language_priority(self, plex_language: str = "") -> tuple[str, ...]:
+        return self._language_priority(self.episode_languages, plex_language)
+
+    def _language_priority(self, configured: tuple[str, ...], plex_language: str) -> tuple[str, ...]:
+        priority: list[str] = []
+        if self.use_plex_language:
+            priority.extend(expand_language_code(plex_language))
+        for language in configured:
+            priority.extend(expand_language_code(language))
+        if "main" not in priority:
+            priority.append("main")
+        return tuple(dict.fromkeys(priority))
 
     @property
     def provider_root(self) -> str:

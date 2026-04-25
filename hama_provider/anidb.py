@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import contextmanager
+from contextvars import ContextVar
 from difflib import SequenceMatcher
 import logging
 import re
@@ -26,6 +28,20 @@ RESTRICTED_GENRE = {
     "tv censoring": "TV-MA",
     "borderline porn": "TV-MA",
 }
+
+_TITLE_LANGUAGES: ContextVar[tuple[str, ...] | None] = ContextVar("hama_title_languages", default=None)
+_EPISODE_LANGUAGES: ContextVar[tuple[str, ...] | None] = ContextVar("hama_episode_languages", default=None)
+
+
+@contextmanager
+def language_context(title_languages: tuple[str, ...], episode_languages: tuple[str, ...]):
+    title_token = _TITLE_LANGUAGES.set(title_languages)
+    episode_token = _EPISODE_LANGUAGES.set(episode_languages)
+    try:
+        yield
+    finally:
+        _EPISODE_LANGUAGES.reset(episode_token)
+        _TITLE_LANGUAGES.reset(title_token)
 
 
 @dataclass(frozen=True)
@@ -238,7 +254,7 @@ class AniDBRepository:
     def _choose_title_entries(self, entries: list[TitleEntry]) -> tuple[str, str]:
         if not entries:
             return "", ""
-        languages = self.config.languages
+        languages = _TITLE_LANGUAGES.get() or self.config.title_language_priority()
         type_priority = {"main": 0, "official": 1, "syn": 3, "synonym": 3, "short": 5, "card": 5, "": 6}
         main = next((entry.title for entry in entries if entry.title_type == "main"), "")
 
@@ -255,7 +271,7 @@ class AniDBRepository:
         return chosen, main or chosen
 
     def _episode_title(self, titles: list[ET.Element]) -> str:
-        languages = self.config.episode_languages
+        languages = _EPISODE_LANGUAGES.get() or self.config.episode_language_priority()
         entries = [
             (
                 languages.index(title.get(XML_LANG, "")) if title.get(XML_LANG, "") in languages else len(languages),

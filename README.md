@@ -82,6 +82,36 @@ python3 -m hama_provider
 
 The value on the right side is the AniDB anime id.
 
+## Language Priority
+
+Returned titles are selected from AniDB titles by language priority. The default
+keeps the AniDB main title first:
+
+```sh
+export HAMA_TITLE_LANGUAGES=main,en,ja
+export HAMA_EPISODE_LANGUAGES=main,en,ja
+python3 -m hama_provider
+```
+
+For Chinese-first metadata, use:
+
+```sh
+export HAMA_TITLE_LANGUAGES=zh-Hans,zh-Hant,en,ja,main
+export HAMA_EPISODE_LANGUAGES=zh-Hans,zh-Hant,en,ja,main
+python3 -m hama_provider
+```
+
+By default, Plex's `X-Plex-Language` request header is prepended to the
+configured priority. Disable that if you want the environment variables to be
+strict:
+
+```sh
+export HAMA_USE_PLEX_LANGUAGE=false
+```
+
+Language aliases are expanded for convenience: `zh` and `zh-CN` try
+`zh-Hans,zh-Hant,zh`; `zh-TW` tries `zh-Hant,zh-Hans,zh`.
+
 ## Public URL
 
 If the provider is behind a reverse proxy, set both the local path prefix and
@@ -202,8 +232,10 @@ as `metadataAgentProviderGroupId`.
 | `HAMA_CACHE_DIR` | `.cache` | HTTP cache directory |
 | `HAMA_HTTP_PROXY` | env proxy | HTTP upstream proxy |
 | `HAMA_HTTPS_PROXY` | env proxy | HTTPS upstream proxy |
-| `HAMA_LANGUAGES` | `main,en,ja` | Series title priority |
+| `HAMA_LANGUAGES` | `main,en,ja` | Backward-compatible title and episode priority |
+| `HAMA_TITLE_LANGUAGES` | `main,en,ja` | Series/movie title priority |
 | `HAMA_EPISODE_LANGUAGES` | `main,en,ja` | Episode title priority |
+| `HAMA_USE_PLEX_LANGUAGE` | `true` | Prepend Plex `X-Plex-Language` to language priority |
 | `HAMA_MIN_GENRE_WEIGHT` | `400` | Minimum AniDB tag weight |
 | `HAMA_INCLUDE_WEIGHTED_GENRES` | `false` | Include weighted non-infobox AniDB tags |
 | `HAMA_PROXY_ASSETS` | `true` | Serve artwork through `/asset/...` |

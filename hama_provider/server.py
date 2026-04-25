@@ -21,51 +21,55 @@ class HamaRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         try:
-            path = self._route_path()
-            if path is None:
-                self._json_error(HTTPStatus.NOT_FOUND, "Not found")
-                return
-            if path in {"", "/"}:
-                self._send_json(self.service.provider())
-            elif path == "/health":
-                self._send_json(self.service.health())
-            elif path.startswith("/asset/"):
-                token = path.rsplit("/", 1)[-1]
-                body, content_type = self.service.asset(token)
-                self._send_bytes(body, content_type)
-            elif path == "/library/metadata/matches":
-                payload = self._query_payload()
-                LOG.info(
-                    "Match request: method=GET type=%r title=%r guid=%r manual=%r",
-                    payload.get("type"),
-                    payload.get("title") or payload.get("grandparentTitle") or payload.get("parentTitle"),
-                    payload.get("guid"),
-                    payload.get("manual"),
-                )
-                self._send_json(self.service.match(payload))
-            elif path.startswith("/library/metadata/"):
-                self._metadata_route(path)
-            else:
-                self._json_error(HTTPStatus.NOT_FOUND, "Not found")
+            with self.service.request_language_context(self.headers.get("X-Plex-Language", "")):
+                path = self._route_path()
+                if path is None:
+                    self._json_error(HTTPStatus.NOT_FOUND, "Not found")
+                    return
+                if path in {"", "/"}:
+                    self._send_json(self.service.provider())
+                elif path == "/health":
+                    self._send_json(self.service.health())
+                elif path.startswith("/asset/"):
+                    token = path.rsplit("/", 1)[-1]
+                    body, content_type = self.service.asset(token)
+                    self._send_bytes(body, content_type)
+                elif path == "/library/metadata/matches":
+                    payload = self._query_payload()
+                    LOG.info(
+                        "Match request: method=GET type=%r title=%r guid=%r manual=%r language=%r",
+                        payload.get("type"),
+                        payload.get("title") or payload.get("grandparentTitle") or payload.get("parentTitle"),
+                        payload.get("guid"),
+                        payload.get("manual"),
+                        self.headers.get("X-Plex-Language", ""),
+                    )
+                    self._send_json(self.service.match(payload))
+                elif path.startswith("/library/metadata/"):
+                    self._metadata_route(path)
+                else:
+                    self._json_error(HTTPStatus.NOT_FOUND, "Not found")
         except Exception as exc:
             LOG.error("GET %s failed: %s\n%s", self.path, exc, traceback.format_exc())
             self._json_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
     def do_POST(self) -> None:
         try:
-            path = self._route_path()
-            if path == "/library/metadata/matches":
-                payload = self._read_payload()
-                LOG.info(
-                    "Match request: method=POST type=%r title=%r guid=%r manual=%r",
-                    payload.get("type"),
-                    payload.get("title") or payload.get("grandparentTitle") or payload.get("parentTitle"),
-                    payload.get("guid"),
-                    payload.get("manual"),
-                )
-                self._send_json(self.service.match(payload))
-            else:
-                self._json_error(HTTPStatus.NOT_FOUND, "Not found")
+            with self.service.request_language_context(self.headers.get("X-Plex-Language", "")):
+                path = self._route_path()
+                if path == "/library/metadata/matches":
+                    payload = self._read_payload()
+                    LOG.info(
+                        "Match request: method=POST type=%r title=%r guid=%r manual=%r language=%r",
+                        payload.get("type"),
+                        payload.get("title") or payload.get("grandparentTitle") or payload.get("parentTitle"),
+                        payload.get("guid"),
+                        payload.get("manual"),
+                        self.headers.get("X-Plex-Language", ""),
+                    )
+                    self._send_json(self.service.match(payload))
+                else:
+                    self._json_error(HTTPStatus.NOT_FOUND, "Not found")
         except Exception as exc:
             LOG.error("POST %s failed: %s\n%s", self.path, exc, traceback.format_exc())
             self._json_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
@@ -171,6 +175,9 @@ def run_server(config: Config) -> None:
     LOG.info("HAMA remote provider listening on http://%s:%s%s", config.host, config.port, config.path_prefix or "/")
     LOG.info("Provider identifier: %s", config.provider_identifier)
     LOG.info("Provider kind: %s", config.provider_kind)
+    LOG.info("Title language priority: %s", ",".join(config.title_language_priority()))
+    LOG.info("Episode language priority: %s", ",".join(config.episode_language_priority()))
+    LOG.info("Use Plex language header: %s", config.use_plex_language)
     server.serve_forever()
 
 
