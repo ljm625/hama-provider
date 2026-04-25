@@ -45,7 +45,15 @@ class HamaRequestHandler(BaseHTTPRequestHandler):
         try:
             path = self._route_path()
             if path == "/library/metadata/matches":
-                self._send_json(self.service.match(self._read_json_body()))
+                payload = self._read_payload()
+                LOG.info(
+                    "Match request: type=%r title=%r guid=%r manual=%r",
+                    payload.get("type"),
+                    payload.get("title") or payload.get("grandparentTitle") or payload.get("parentTitle"),
+                    payload.get("guid"),
+                    payload.get("manual"),
+                )
+                self._send_json(self.service.match(payload))
             else:
                 self._json_error(HTTPStatus.NOT_FOUND, "Not found")
         except Exception as exc:
@@ -96,12 +104,29 @@ class HamaRequestHandler(BaseHTTPRequestHandler):
             size = 20
         return max(0, start), max(1, min(size, 200))
 
-    def _read_json_body(self) -> dict[str, object]:
+    def _read_payload(self) -> dict[str, object]:
+        payload = self._query_payload()
         length = int(self.headers.get("Content-Length", "0") or "0")
         if not length:
-            return {}
+            return payload
         body = self.rfile.read(length).decode("utf-8")
-        return json.loads(body) if body else {}
+        if not body:
+            return payload
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type == "application/x-www-form-urlencoded":
+            payload.update(_flatten_query(urllib.parse.parse_qs(body, keep_blank_values=True)))
+            return payload
+        if content_type in {"", "application/json"}:
+            payload.update(json.loads(body))
+            return payload
+        try:
+            payload.update(json.loads(body))
+        except json.JSONDecodeError:
+            payload.update(_flatten_query(urllib.parse.parse_qs(body, keep_blank_values=True)))
+        return payload
+
+    def _query_payload(self) -> dict[str, object]:
+        return _flatten_query(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query, keep_blank_values=True))
 
     def _send_json(self, payload: object, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -135,4 +160,9 @@ def run_server(config: Config) -> None:
     server = ThreadingHTTPServer((config.host, config.port), Handler)
     LOG.info("HAMA remote provider listening on http://%s:%s%s", config.host, config.port, config.path_prefix or "/")
     LOG.info("Provider identifier: %s", config.provider_identifier)
+    LOG.info("Provider kind: %s", config.provider_kind)
     server.serve_forever()
+
+
+def _flatten_query(values: dict[str, list[str]]) -> dict[str, object]:
+    return {key: item[0] if len(item) == 1 else item for key, item in values.items()}

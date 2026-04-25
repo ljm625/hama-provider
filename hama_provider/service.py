@@ -38,16 +38,15 @@ class HamaProviderService:
 
     def provider(self) -> dict[str, Any]:
         scheme = self.config.provider_identifier
+        type_numbers = self._provider_type_numbers()
         return {
             "MediaProvider": {
                 "identifier": scheme,
                 "title": self.config.provider_title,
                 "version": __version__,
                 "Types": [
-                    {"type": 1, "Scheme": [{"scheme": scheme}]},
-                    {"type": 2, "Scheme": [{"scheme": scheme}]},
-                    {"type": 3, "Scheme": [{"scheme": scheme}]},
-                    {"type": 4, "Scheme": [{"scheme": scheme}]},
+                    {"type": type_number, "Scheme": [{"scheme": scheme}]}
+                    for type_number in type_numbers
                 ],
                 "Feature": [
                     {"type": "metadata", "key": self.config.provider_path("/library/metadata")},
@@ -61,11 +60,16 @@ class HamaProviderService:
             "ok": True,
             "version": __version__,
             "providerIdentifier": self.config.provider_identifier,
+            "providerKind": self.config.provider_kind,
+            "providerTypes": self._provider_type_numbers(),
             "proxy": bool(self.client.proxies),
         }
 
     def match(self, payload: dict[str, Any]) -> dict[str, Any]:
         item_type = self._payload_type(payload)
+        if not self._supports_item_type(item_type):
+            LOG.info("Match ignored: provider kind %s does not support type %s", self.config.provider_kind, item_type)
+            return media_container(self.config.provider_identifier, [])
         title = self._payload_title(payload)
         forced = self._forced_id(payload, title)
         candidates: list[dict[str, Any]] = []
@@ -83,10 +87,13 @@ class HamaProviderService:
         manual = str(payload.get("manual", "")).lower() in {"1", "true", "yes"}
         if not manual and candidates:
             candidates = candidates[:1]
+        LOG.info("Match result: title=%r type=%s forced=%s candidates=%d", title, item_type, forced, len(candidates))
         return media_container(self.config.provider_identifier, candidates)
 
     def metadata(self, rating_key: str) -> dict[str, Any]:
         parsed = self._parse_rating_key(rating_key)
+        if not self._supports_item_type(parsed.item_type):
+            raise ValueError(f"Provider kind {self.config.provider_kind} does not support {parsed.item_type}")
         anime = self.anidb.fetch_metadata(parsed.aid)
         mapping = self.anime_lists.find_by_anidb(parsed.aid)
         if parsed.item_type in {"show", "movie"}:
@@ -300,6 +307,20 @@ class HamaProviderService:
                 return TYPE_NAMES.get(int(value), "show")
             return value.lower() if value.lower() in TYPE_NAMES.values() else "show"
         return "show"
+
+    def _provider_type_numbers(self) -> list[int]:
+        if self.config.provider_kind == "movie":
+            return [1]
+        if self.config.provider_kind == "both":
+            return [1, 2, 3, 4]
+        return [2, 3, 4]
+
+    def _supports_item_type(self, item_type: str) -> bool:
+        if self.config.provider_kind == "both":
+            return item_type in {"movie", "show", "season", "episode"}
+        if self.config.provider_kind == "movie":
+            return item_type == "movie"
+        return item_type in {"show", "season", "episode"}
 
     @staticmethod
     def _payload_title(payload: dict[str, Any]) -> str:

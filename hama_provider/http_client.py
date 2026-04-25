@@ -55,6 +55,7 @@ class HttpClient:
         cache_key = self._cache_key(url, data, method)
         cache_file = self.cache_dir / cache_key
         if ttl > 0 and cache_file.exists() and time.time() - cache_file.stat().st_mtime < ttl:
+            LOG.info("HTTP cache hit: %s", url)
             return CachedResponse(cache_file.read_bytes(), url, True)
 
         request_headers = {
@@ -65,6 +66,7 @@ class HttpClient:
             request_headers.update(headers)
         request = urllib.request.Request(url, data=data, headers=request_headers, method=method)
         try:
+            LOG.info("HTTP fetch: %s", url)
             with self.opener.open(request, timeout=timeout or self.config.request_timeout) as response:
                 body = response.read()
         except urllib.error.HTTPError as exc:

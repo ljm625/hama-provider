@@ -47,12 +47,34 @@ def _languages(value: str) -> tuple[str, ...]:
     return items or ("main", "en", "ja")
 
 
+def _provider_kind(value: str) -> str:
+    value = (value or "tv").strip().lower()
+    return value if value in {"tv", "movie", "both"} else "tv"
+
+
+def default_identifier(provider_kind: str) -> str:
+    if provider_kind == "movie":
+        return "tv.plex.agents.custom.zeroqi.hama.movie"
+    if provider_kind == "both":
+        return "tv.plex.agents.custom.zeroqi.hama.all"
+    return "tv.plex.agents.custom.zeroqi.hama"
+
+
+def default_title(provider_kind: str) -> str:
+    if provider_kind == "movie":
+        return "HAMA Remote Movies"
+    if provider_kind == "both":
+        return "HAMA Remote All"
+    return "HAMA Remote TV"
+
+
 @dataclass(frozen=True)
 class Config:
     host: str
     port: int
     path_prefix: str
     base_url: str
+    provider_kind: str
     provider_identifier: str
     provider_title: str
     cache_dir: Path
@@ -71,13 +93,15 @@ class Config:
     def from_env(cls) -> "Config":
         http_proxy = _env("HAMA_HTTP_PROXY") or _env("HTTP_PROXY") or _env("http_proxy")
         https_proxy = _env("HAMA_HTTPS_PROXY") or _env("HTTPS_PROXY") or _env("https_proxy")
+        provider_kind = _provider_kind(_env("HAMA_PROVIDER_KIND", "tv"))
         return cls(
             host=_env("HAMA_HOST", "0.0.0.0"),
             port=_int("HAMA_PORT", 34567),
             path_prefix=_path_prefix(_env("HAMA_PATH_PREFIX")),
             base_url=_base_url(_env("HAMA_BASE_URL")),
-            provider_identifier=_env("HAMA_PROVIDER_IDENTIFIER", "tv.plex.agents.custom.zeroqi.hama"),
-            provider_title=_env("HAMA_PROVIDER_TITLE", "HAMA Remote"),
+            provider_kind=provider_kind,
+            provider_identifier=_env("HAMA_PROVIDER_IDENTIFIER", default_identifier(provider_kind)),
+            provider_title=_env("HAMA_PROVIDER_TITLE", default_title(provider_kind)),
             cache_dir=Path(_env("HAMA_CACHE_DIR", ".cache")).expanduser(),
             http_proxy=_proxy_url(http_proxy),
             https_proxy=_proxy_url(https_proxy),
