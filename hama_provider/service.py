@@ -9,7 +9,7 @@ import urllib.parse
 
 from . import __version__
 from .anime_lists import AnimeListMapping, AnimeListsRepository
-from .anidb import AniDBRepository, AnimeMetadata, EpisodeMetadata, normalize_title
+from .anidb import AniDBRepository, AnimeMetadata, EpisodeMetadata, fold_title, normalize_title
 from .config import Config
 from .http_client import HttpClient
 from .models import TYPE_NAMES, guid_items, image_container, media_container, tag_items
@@ -392,8 +392,9 @@ class HamaProviderService:
         if title in self.config.title_aliases:
             return self.config.title_aliases[title]
         normalized = normalize_title(title)
+        folded = fold_title(title)
         for alias, aid in self.config.title_aliases.items():
-            if normalize_title(alias) == normalized:
+            if normalize_title(alias) == normalized or fold_title(alias) == folded:
                 return aid
         return ""
 

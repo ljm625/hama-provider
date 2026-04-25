@@ -35,6 +35,7 @@ class TitleEntry:
     title_type: str
     language: str
     normalized: str
+    folded: str
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,7 @@ class AniDBRepository:
                     title_type=title.get("type", ""),
                     language=title.get(XML_LANG, ""),
                     normalized=normalize_title(text),
+                    folded=fold_title(text),
                 )
                 entries.append(entry)
                 by_aid.setdefault(aid, []).append(entry)
@@ -140,12 +142,13 @@ class AniDBRepository:
     def search(self, query: str, *, limit: int) -> list[MatchCandidate]:
         self.ensure_titles()
         normalized = normalize_title(query)
-        if not normalized:
+        folded = fold_title(query)
+        if not normalized and not folded:
             return []
         words = [word for word in normalized.split() if len(word) > 2]
         best: dict[str, MatchCandidate] = {}
         for entry in self._title_entries:
-            score = self._score(normalized, words, entry)
+            score = self._score(normalized, folded, words, entry)
             if score < 35:
                 continue
             current = best.get(entry.aid)
@@ -191,21 +194,28 @@ class AniDBRepository:
         )
 
     @staticmethod
-    def _score(normalized_query: str, words: list[str], entry: TitleEntry) -> int:
-        title = entry.normalized
-        if not title:
-            return 0
-        if title == normalized_query:
+    def _score(normalized_query: str, folded_query: str, words: list[str], entry: TitleEntry) -> int:
+        if folded_query and entry.folded == folded_query:
             score = 100
-        elif title.startswith(normalized_query) or normalized_query.startswith(title):
+        elif folded_query and (entry.folded.startswith(folded_query) or folded_query.startswith(entry.folded)):
             score = 92
-        elif normalized_query in title:
+        elif folded_query and folded_query in entry.folded:
             score = 88
+        elif normalized_query and entry.normalized:
+            title = entry.normalized
+            if title == normalized_query:
+                score = 100
+            elif title.startswith(normalized_query) or normalized_query.startswith(title):
+                score = 92
+            elif normalized_query in title:
+                score = 88
+            else:
+                score = int(SequenceMatcher(None, normalized_query, title).ratio() * 100)
+                if words:
+                    matched = sum(1 for word in words if word in title)
+                    score = max(score, int(100 * matched / len(words)) - 5)
         else:
-            score = int(SequenceMatcher(None, normalized_query, title).ratio() * 100)
-            if words:
-                matched = sum(1 for word in words if word in title)
-                score = max(score, int(100 * matched / len(words)) - 5)
+            score = int(SequenceMatcher(None, folded_query, entry.folded).ratio() * 100) if folded_query and entry.folded else 0
         type_penalty = {"main": 0, "official": 1, "syn": 3, "synonym": 3, "short": 8, "card": 8}
         score -= type_penalty.get(entry.title_type, 4)
         return max(0, score)
@@ -218,6 +228,7 @@ class AniDBRepository:
                 title_type=title.get("type", ""),
                 language=title.get(XML_LANG, ""),
                 normalized=normalize_title(title.text or ""),
+                folded=fold_title(title.text or ""),
             )
             for title in titles
             if (title.text or "").strip()
@@ -358,6 +369,11 @@ def normalize_title(value: str) -> str:
     value = unicodedata.normalize("NFKD", value or "")
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def fold_title(value: str) -> str:
+    value = unicodedata.normalize("NFKC", value or "").replace("`", "'")
+    return re.sub(r"\s+", " ", value.casefold()).strip()
 
 
 def child_text(element: ET.Element, path: str) -> str:
